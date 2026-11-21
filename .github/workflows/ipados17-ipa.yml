@@ -1,0 +1,84 @@
+name: iPadOS 17 unsigned IPA
+
+# Builds an unsigned Release IPA with the iOS 17.0 deployment target, for
+# sideloading with a free Apple ID (SideStore / Impactor sign it on install).
+on:
+  workflow_dispatch:
+  push:
+    branches: [ipados17]
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      APP_VARIANT: production
+      EXPO_NO_GIT_STATUS: "1"
+      T3CODE_IOS_PERSONAL_TEAM: "1"
+      T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID: com.olafmeneses.t3code
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          xcode="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/mobile... --filter=@t3tools/scripts...
+
+      # Public T3 Connect identifiers, same as official builds.
+      - name: Enable T3 Connect config
+        run: cp .env.example .env
+
+      - name: Prebuild native project
+        working-directory: apps/mobile
+        run: ./node_modules/.bin/expo prebuild --clean --platform ios
+
+      - name: Build unsigned app
+        working-directory: apps/mobile/ios
+        run: |
+          workspace="$(ls -d *.xcworkspace | head -1)"
+          scheme="${workspace%.xcworkspace}"
+          echo "workspace=$workspace scheme=$scheme"
+          set -o pipefail
+          xcodebuild \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log" | grep -E 'error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)|\*\*' || true
+          grep -q 'BUILD SUCCEEDED' "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+
+      - name: Package IPA
+        run: |
+          app="$(ls -d "$RUNNER_TEMP"/dd/Build/Products/Release-iphoneos/*.app | head -1)"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app/Info.plist"
+          cd "$RUNNER_TEMP/ipa" && zip -qry "$RUNNER_TEMP/T3Code-ipados17.ipa" Payload
+          ls -lh "$RUNNER_TEMP/T3Code-ipados17.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: T3Code-ipados17-ipa
+          path: ${{ runner.temp }}/T3Code-ipados17.ipa

@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description = "Loads an environment's loopback pages on the device through the server's preview tunnel, keeping their localhost origin."
   s.author = 'T3 Tools'
   s.homepage = 'https://t3tools.com'
-  s.platform = :ios, '18.0'
+  s.platform = :ios, '17.0'
   s.source = { :path => '.' }
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
